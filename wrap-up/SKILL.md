@@ -16,7 +16,8 @@ Parse the invocation text for modifiers:
 
 - `--compact`, "compact", "compress", "and compress" → **compact mode**
 - `--interactive`, "interactive", "ask me", "questions first" → **interactive mode**
-- Modes compose: both can be active at once.
+- `--continues-from <filename>`, "continues from", "chain from" → **chain mode**; capture the predecessor filename. If no filename given, auto-discover the most recent wrap-up in `./wrap-ups/` (Glob `./wrap-ups/*.md`, sort by name desc, take the most recent result). If no existing wrap-ups are found, warn the user ("No previous wrap-up found to chain from — proceeding without chain link") and continue in standard mode with no chain fields populated.
+- Modes compose: all three can be active simultaneously.
 
 If **no modifier** was specified, ask the user via `AskUserQuestion`:
 
@@ -26,6 +27,7 @@ If **no modifier** was specified, ask the user via `AskUserQuestion`:
   2. "Wrap up and compress context" (also runs `/compact` after saving)
   3. "Wrap up with questions first" (interactive Q&A before writing)
   4. "Wrap up with questions, then compress" (both)
+  5. "Chain from previous" (links this wrap-up to the most recent existing one)
 
 Respect the user's answer.
 
@@ -106,6 +108,14 @@ Formula: `cost = (input/1e6 × rate_in) + (output/1e6 × rate_out) + (cache_read
 
 ## Step 4 — Write the wrap-up file
 
+**Scan for secrets.** Before writing, scan the text you've assembled for the wrap-up (purpose, completed work, todos, key files, and resume instructions) for lines that look like embedded credentials. Look for patterns matching:
+
+```
+(api[_-]?key|secret[_-]?key|password|passwd|private[_-]?key|auth[_-]?token)\s*[:=]\s*[A-Za-z0-9+/._=-]{16,}
+```
+
+Scan the assembled text in context — do not run a shell command. If any lines match, report them to the user and ask: "Found potential secrets in wrap-up content — redact before saving?" Do not write the file until confirmed. If no matches, proceed silently.
+
 **Path:** `./wrap-ups/<YYYY-MM-DD>-<HHMM>-<slug>.md`
 
 - `<slug>` is a 2–4 word kebab-case summary of the session topic (e.g., `auth-bug-fix`, `wrap-up-skill-design`). Derive from the session's actual work, not generic phrases.
@@ -117,6 +127,7 @@ Formula: `cost = (input/1e6 × rate_in) + (output/1e6 × rate_out) + (cache_read
 ````markdown
 # Session Wrap-up — <topic>
 _<YYYY-MM-DD HH:MM> · <working-dir> · branch: <branch-or-"n/a">_
+_↳ Continues from: [<predecessor-filename>](./wrap-ups/<predecessor-filename>)_ _(omit if not chain mode)_
 
 ## For People
 
@@ -158,6 +169,7 @@ _<YYYY-MM-DD HH:MM> · <working-dir> · branch: <branch-or-"n/a">_
   - [ ] <todo 2>
 - **Open threads:** <unresolved questions / pending decisions>
 - **Do NOT:** <known pitfalls, approaches ruled out>
+- **Chain:** `./wrap-ups/<predecessor-filename>` → this file _(omit if not chain mode)_
 
 ### Resume instructions
 Read this file. Verify state (git branch, file existence). First action: `<specific command or edit>`.
@@ -188,10 +200,13 @@ Resume this session. Read ./wrap-ups/<filename>.md — especially the "For Claud
   "estimated_cost_usd": <X.XX>,
   "tool_calls": {
     "<ToolName>": <N>
-  }
+  },
+  "continues_from": null
 }
 ```
 ````
+
+_`continues_from`: substitute the actual predecessor filename string (e.g. `"2026-04-19-1430-auth-bug-fix.md"`) when chain mode is active; leave as `null` when not._
 
 **Writing guidance for the Claude section:**
 

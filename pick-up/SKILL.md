@@ -37,6 +37,8 @@ Read the full file with the `Read` tool. Focus extraction on the `## For Claude`
 - "Do NOT" list
 - Resume instructions (especially the first action)
 
+Also check the header area (first 5 lines of the file) for a `↳ Continues from:` line. If present, capture the bare predecessor filename from the href of the markdown link — the text inside the parentheses, after stripping the `./wrap-ups/` prefix (e.g. `2026-04-15-auth-setup.md`).
+
 Also skim the "For People" section for context on why the work exists, but do not rely on it for operating details.
 
 ## Step 3 — Verify environment
@@ -44,8 +46,31 @@ Also skim the "For People" section for context on why the work exists, but do no
 Spot-check that the state described in the file still holds:
 
 1. **Git branch.** If the file's header lists a branch, run `git branch --show-current` and compare. On mismatch, tell the user — do not auto-switch branches.
-2. **Key files exist.** For each `path/to/file.ext:line` reference in the Claude section, confirm the file exists. Use `Glob` or direct `Read` checks sparingly; don't waste turns on every path. Warn on any missing file.
-3. **Uncommitted files count.** If the file lists a count, run `git status --short | wc -l` and note drift in the announcement (don't block on it — the user may have committed or made new changes in the meantime).
+2. **Staleness check (git repos only).** First verify you're in a git repo:
+
+```bash
+git rev-parse --is-inside-work-tree 2>/dev/null
+```
+
+If the above returns nothing or exits non-zero, skip the rest of this step entirely.
+
+Otherwise, extract the full timestamp from the wrap-up's header line (format: `_2026-04-20 22:30 · ...`). Capture both the date (`YYYY-MM-DD`) and time (`HH:MM`). Then run:
+
+```bash
+WRAP_DATETIME="<YYYY-MM-DD HH:MM:00 from header>"
+COMMIT_COUNT=$(git log --oneline --after="$WRAP_DATETIME" 2>/dev/null | wc -l | tr -d ' ')
+echo "commits since wrap-up: $COMMIT_COUNT"
+```
+
+Incorporate the result into the announcement (Step 6):
+- 0 commits → omit (don't clutter the announcement)
+- 1–10 commits → "N commits since this wrap-up was written."
+- 11+ commits → "⚠ N commits since this wrap-up — context may be stale."
+
+Never block resume based on this. Informational only.
+
+3. **Key files exist.** For each `path/to/file.ext:line` reference in the Claude section, confirm the file exists. Use `Glob` or direct `Read` checks sparingly; don't waste turns on every path. Warn on any missing file.
+4. **Uncommitted files count.** If the file lists a count, run `git status --short | wc -l` and note drift in the announcement (don't block on it — the user may have committed or made new changes in the meantime).
 
 ## Step 4 — Re-populate TodoWrite
 
@@ -66,6 +91,8 @@ Report to the user in ≤4 sentences:
 
 End the report by explicitly waiting for user confirmation. Example phrasing:
 
-> Loaded `wrap-ups/2026-04-20-1800-auth-bug.md`. Branch matches, 3 todos restored, all key files present. First action: edit `src/auth.ts:42` to wire the new token check. Ready when you are — say "go" to proceed.
+> Loaded `wrap-ups/2026-04-20-1800-auth-bug.md` _(chained from `2026-04-15-auth-setup.md`)_. Branch matches, 3 todos restored, all key files present. 4 commits since wrap-up. First action: edit `src/auth.ts:42` to wire the new token check. Ready when you are — say "go" to proceed, or "load chain" to read the predecessor for full project lineage.
+
+If a chain predecessor was detected: include it in the announcement as shown. If the user says "load chain" instead of "go": read the predecessor wrap-up file's `## For Claude` section and surface it as additional context before beginning work. If the predecessor file is not found, tell the user ('Predecessor wrap-up not found — proceeding without chain context') and continue with the current wrap-up only. If no chain predecessor was found: omit the chain portion of the announcement entirely.
 
 **Do not execute the first action automatically.** The user may want to adjust, amend the todos, or bail. Wait for an explicit go-ahead.
