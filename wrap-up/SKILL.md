@@ -62,6 +62,48 @@ Also read the **active `TodoWrite` list** from the current session context — C
 
 Determine the **project memory dir**: encode the current working directory by replacing `/` with `-` and prefixing with `-`. Example: `/Users/alice/Projects/foo` → `~/.claude/projects/-Users-alice-Projects-foo/memory/`. The directory may or may not exist; do not create it yet.
 
+**Compute session stats.** The session transcript lives at `~/.claude/projects/<encoded-cwd>/*.jsonl`. Glob that directory and pick the most recent `.jsonl` by mtime — that's the current session. If `jq` isn't on PATH, or no transcript is found, skip stats entirely (don't block the wrap-up).
+
+Aggregate with `jq`:
+
+```bash
+TRANSCRIPT=<path-to-most-recent-jsonl>
+
+# Duration (ISO timestamps, first → last entry)
+FIRST=$(jq -r 'select(.timestamp) | .timestamp' "$TRANSCRIPT" | head -1)
+LAST=$(jq -r 'select(.timestamp) | .timestamp' "$TRANSCRIPT" | tail -1)
+# Convert via `date -j -f "%Y-%m-%dT%H:%M:%S" ...` on macOS, or `date -d` on Linux
+
+# Tokens (sum over assistant messages)
+jq -s '[.[] | select(.type=="assistant") | .message.usage // {}]
+       | {input: (map(.input_tokens // 0) | add),
+          output: (map(.output_tokens // 0) | add),
+          cache_read: (map(.cache_read_input_tokens // 0) | add),
+          cache_create: (map(.cache_creation_input_tokens // 0) | add)}' "$TRANSCRIPT"
+
+# Tool calls grouped by name, sorted by count desc
+jq -s '[.[] | select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | .name]
+       | group_by(.) | map({name: .[0], count: length}) | sort_by(-.count)' "$TRANSCRIPT"
+
+# Unique models used
+jq -sr '[.[] | select(.type=="assistant") | .message.model] | unique | .[]' "$TRANSCRIPT"
+
+# Message count (user + assistant turns)
+jq -s '[.[] | select(.type=="assistant" or .type=="user")] | length' "$TRANSCRIPT"
+```
+
+**Compute estimated cost.** Use the pricing table below (USD per 1M tokens). If multiple models appear, sum per-model estimates (approximate — Claude can't attribute individual tokens to specific models from the transcript alone; use the dominant model's rate, or average across models used). If a model isn't listed, report cost as `n/a`.
+
+| Model ID | input | output | cache_read | cache_create |
+|---|---|---|---|---|
+| `claude-sonnet-4-6` | $3.00 | $15.00 | $0.30 | $3.75 |
+| `claude-opus-4-7` | $15.00 | $75.00 | $1.50 | $18.75 |
+| `claude-haiku-4-5` | $1.00 | $5.00 | $0.10 | $1.25 |
+
+_Pricing snapshot as of 2026-04 — update when rates change._
+
+Formula: `cost = (input/1e6 × rate_in) + (output/1e6 × rate_out) + (cache_read/1e6 × rate_cache_read) + (cache_create/1e6 × rate_cache_create)`.
+
 ## Step 4 — Write the wrap-up file
 
 **Path:** `./wrap-ups/<YYYY-MM-DD>-<HHMM>-<slug>.md`
@@ -95,6 +137,9 @@ _<YYYY-MM-DD HH:MM> · <working-dir> · branch: <branch-or-"n/a">_
 ### Environment Snapshot
 - Branch: <name> · Uncommitted: <N> files · Last commit: <hash> <subject>
 - Active todos: <N> (verbatim list in the Claude section below)
+- Duration: <Hh Mm> · Messages: <N> · Models: <comma-separated list>
+- Tokens: <total> total (in: <N>, out: <N>, cache read: <N>, cache create: <N>)
+- Est. cost: $<X.XX> · Top tools: Read(<N>), Edit(<N>), Bash(<N>), ...
 
 ---
 
@@ -123,6 +168,28 @@ Read this file. Verify state (git branch, file existence). First action: `<speci
 
 ```
 Resume this session. Read ./wrap-ups/<filename>.md — especially the "For Claude" section. Verify state, then execute the Resume instructions. First action: <specific thing>.
+```
+
+---
+
+## Session Stats (machine-readable)
+
+```json
+{
+  "duration_seconds": <N>,
+  "messages": <N>,
+  "models": ["<model-id>", "..."],
+  "tokens": {
+    "input": <N>,
+    "output": <N>,
+    "cache_read": <N>,
+    "cache_create": <N>
+  },
+  "estimated_cost_usd": <X.XX>,
+  "tool_calls": {
+    "<ToolName>": <N>
+  }
+}
 ```
 ````
 
